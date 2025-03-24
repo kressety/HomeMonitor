@@ -1,5 +1,4 @@
 import platform
-import socket
 from typing import Dict, List
 
 import docker
@@ -9,18 +8,8 @@ from fastapi import FastAPI
 
 app = FastAPI()
 
-
-# 获取本机IP地址
-def get_local_ip():
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        s.connect(('10.255.255.255', 1))
-        ip = s.getsockname()[0]
-    except Exception:
-        ip = '127.0.0.1'
-    finally:
-        s.close()
-    return ip
+# 你想要的固定IP地址
+HOST_IP = "192.168.31.70"
 
 
 @app.get("/system-info")
@@ -56,7 +45,6 @@ async def get_system_info() -> Dict:
 @app.get("/compose-apps")
 async def get_compose_apps() -> List[Dict]:
     """获取Docker Compose运行的应用列表及其HTTP地址"""
-    local_ip = get_local_ip()
     client = docker.from_env()
 
     # 获取所有容器
@@ -65,6 +53,7 @@ async def get_compose_apps() -> List[Dict]:
 
     # 排除的支持类服务
     exclude_services = {
+        'home-monitor',
         'nginx',
         'redis',
         'postgres',
@@ -83,23 +72,24 @@ async def get_compose_apps() -> List[Dict]:
         if not service_name or service_name in exclude_services:
             continue
 
-        # 获取端口映射
+        # 获取所有端口映射
         ports = container.attrs['NetworkSettings']['Ports']
-        http_port = None
+        exposed_port = None
         for internal_port, external in ports.items():
-            if external and internal_port.startswith('80'):
-                http_port = external[0]['HostPort']
-                break
-            elif external and internal_port.startswith('443'):
-                http_port = external[0]['HostPort']
-                break
-
-        if http_port:
-            apps.append({
-                "name": service_name,
-                "url": f"http://{local_ip}:{http_port}",
-                "status": container.status
-            })
+            # 检查是否有外部端口映射
+            if external and len(external) > 0:
+                exposed_port = external[0]['HostPort']
+                # 如果是80或443开头，使用http或https协议，否则也记录下来
+                protocol = "http"
+                if internal_port.startswith('443'):
+                    protocol = "https"
+                apps.append({
+                    "name": service_name,
+                    "url": f"{protocol}://{HOST_IP}:{exposed_port}",
+                    "status": container.status,
+                    "internal_port": internal_port.split('/')[0]  # 添加内部端口信息用于调试
+                })
+                break  # 找到第一个映射端口后跳出
 
     return apps
 
